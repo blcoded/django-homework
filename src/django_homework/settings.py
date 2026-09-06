@@ -40,10 +40,15 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # Third party apps
     "rest_framework",
+    "rest_framework.authtoken",
     "corsheaders",
-    # Local project app
+    # Local project apps
+    "users.apps.UsersConfig",
     "django_homework.apps.DjangoHomeworkConfig",
 ]
+
+AUTH_USER_MODEL = "users.User"
+
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -129,9 +134,11 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Django REST Framework
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.TokenAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
+
         "rest_framework.permissions.IsAuthenticated",
     ],
 }
