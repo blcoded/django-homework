@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "corsheaders",
     # Local project apps
     "users.apps.UsersConfig",
+    "households.apps.HouseholdsConfig",
     "django_homework.apps.DjangoHomeworkConfig",
 ]
 
