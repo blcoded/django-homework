@@ -7,7 +7,12 @@ authors = [
     { name = "blcoded", email = "140761062+blcoded@users.noreply.github.com" }
 ]
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "django>=5.2.17",
+    "django-cors-headers>=4.9.0",
+    "djangorestframework>=3.18.0",
+    "python-dotenv>=1.2.3",
+]
 
 [project.scripts]
 django-homework = "django_homework:main"
@@ -15,3 +20,17 @@ django-homework = "django_homework:main"
 [build-system]
 requires = ["uv_build>=0.12.10,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "pytest-django>=4.14.0",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "django_homework.settings"
+python_files = ["tests.py", "test_*.py", "*_test.py"]
+pythonpath = ["src"]
+addopts = "--tb=short"
+
