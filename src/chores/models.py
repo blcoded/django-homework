@@ -424,6 +424,12 @@ class ChoreOccurrence(models.Model):
         if self.status == self.STATUS_UPCOMING:
             self.status = self.STATUS_ACTIVE
             self.save(update_fields=["status", "updated_at"])
+            try:
+                from notifications.services import NotificationService
+
+                NotificationService.dispatch_your_turn(self)
+            except Exception:
+                pass
 
     def mark_missed(self, missed_time=None):
         """Transition from ACTIVE to MISSED when deadline expires."""

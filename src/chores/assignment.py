@@ -160,4 +160,15 @@ class FairAssignmentEngine:
                 occurrence=occurrence, user=user
             )
             assignments.append(assignment)
+
+        try:
+            from notifications.services import NotificationService
+
+            if occurrence.status == ChoreOccurrence.STATUS_UPCOMING:
+                NotificationService.dispatch_youre_next(occurrence, users=selected_users)
+            elif occurrence.status == ChoreOccurrence.STATUS_ACTIVE:
+                NotificationService.dispatch_your_turn(occurrence, users=selected_users)
+        except Exception:
+            pass
+
         return assignments

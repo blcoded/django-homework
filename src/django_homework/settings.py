@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "users.apps.UsersConfig",
     "households.apps.HouseholdsConfig",
     "chores.apps.ChoresConfig",
+    "notifications.apps.NotificationsConfig",
     "django_homework.apps.DjangoHomeworkConfig",
 ]
 
@@ -158,4 +159,13 @@ CORS_ALLOWED_ORIGINS = [
 
 # Baseline Test Runner
 TEST_RUNNER = "django_homework.test_runner.HomeworkTestRunner"
+
+# Email Configuration
+EMAIL_BACKEND = os.environ.get(
+    "EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
+)
+DEFAULT_FROM_EMAIL = os.environ.get(
+    "DEFAULT_FROM_EMAIL", "noreply@householdchores.local"
+)
+
 
