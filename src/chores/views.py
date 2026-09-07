@@ -1,6 +1,8 @@
+from django.core.exceptions import PermissionDenied
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -16,6 +18,7 @@ from .models import (
     ChoreSuggestionVote,
 )
 from .serializers import (
+    ChoreCompletionSerializer,
     ChoreOccurrenceSerializer,
     ChoreSerializer,
     ChoreSuggestionSerializer,
@@ -271,14 +274,33 @@ class ChoreOccurrenceViewSet(viewsets.ReadOnlyModelViewSet):
             status=status.HTTP_200_OK,
         )
 
-    @action(detail=True, methods=["post"], url_path="complete")
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="complete",
+        parser_classes=[MultiPartParser, FormParser, JSONParser],
+    )
     def complete(self, request, pk=None):
-        """Mark occurrence complete for the authenticated user."""
+        """
+        Mark occurrence complete for the authenticated user.
+        Supports single-tap completion (no payload), optional notes, and photo proof uploads.
+        """
         occurrence = self.get_object()
-        notes = request.data.get("notes", "")
-        updated = OccurrenceService.complete_occurrence(
-            occurrence=occurrence, user=request.user, notes=notes
-        )
+        serializer = ChoreCompletionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        notes = serializer.validated_data.get("notes", "")
+        proof_image = serializer.validated_data.get("proof_image", None)
+
+        try:
+            updated = OccurrenceService.complete_occurrence(
+                occurrence=occurrence,
+                user=request.user,
+                notes=notes,
+                proof_image=proof_image,
+            )
+        except PermissionDenied as e:
+            return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
+
         return Response(self.get_serializer(updated).data, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=["get"], url_path="next-up")

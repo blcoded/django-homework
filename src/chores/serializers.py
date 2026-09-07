@@ -182,6 +182,7 @@ class ChoreAssignmentSerializer(serializers.ModelSerializer):
             "was_missed",
             "missed_at",
             "notes",
+            "proof_image",
             "created_at",
             "updated_at",
         ]
@@ -192,9 +193,26 @@ class ChoreAssignmentSerializer(serializers.ModelSerializer):
             "completed_at",
             "was_missed",
             "missed_at",
+            "proof_image",
             "created_at",
             "updated_at",
         ]
+
+
+class ChoreCompletionSerializer(serializers.Serializer):
+    notes = serializers.CharField(required=False, allow_blank=True, default="")
+    proof_image = serializers.FileField(
+        required=False,
+        allow_null=True,
+        default=None,
+    )
+
+    def validate_proof_image(self, value):
+        if value:
+            from .validators import validate_image_proof
+
+            validate_image_proof(value)
+        return value
 
 
 class ChoreOccurrenceSerializer(serializers.ModelSerializer):

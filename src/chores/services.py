@@ -178,30 +178,48 @@ class OccurrenceService:
 
     @staticmethod
     def complete_occurrence(
-        occurrence: ChoreOccurrence, user, notes: str = "", completed_time=None
+        occurrence: ChoreOccurrence,
+        user,
+        notes: str = "",
+        proof_image=None,
+        completed_time=None,
     ) -> ChoreOccurrence:
         """
         Record completion by an assigned roommate.
-        When all required assignments are satisfied, complete the occurrence and
-        generate the next single occurrence for recurring chores.
+        Supports optional notes and validated photo proof upload.
+        Enforces completion gating for multi-person chores such that the occurrence
+        only completes once every assigned roommate submits their completion.
         """
+        from django.core.exceptions import PermissionDenied
+
         now = completed_time or timezone.now()
         if occurrence.pk:
             occurrence.refresh_from_db(fields=["status", "was_missed", "missed_at"])
 
-        # Update or create user assignment completion
-        assignment, _ = ChoreAssignment.objects.get_or_create(
-            occurrence=occurrence,
-            user=user,
-        )
+        chore = occurrence.chore
+
+        # Multi-assignee check: if assignments already exist, user must be one of the assignees
+        existing_assignments = occurrence.assignments.all()
+        if existing_assignments.exists():
+            assignment = existing_assignments.filter(user=user).first()
+            if not assignment:
+                raise PermissionDenied(
+                    "You are not an assigned roommate for this chore occurrence."
+                )
+        else:
+            assignment = ChoreAssignment.objects.create(
+                occurrence=occurrence, user=user
+            )
+
         assignment.completed = True
         assignment.completed_at = now
         if notes:
             assignment.notes = notes
-        assignment.save(update_fields=["completed", "completed_at", "notes", "updated_at"])
+        if proof_image:
+            assignment.proof_image = proof_image
+        assignment.save()
 
-        # Check if all required assignments are satisfied
-        chore = occurrence.chore
+        # Enforce completion gating: all required assignees must independently complete
         required_count = (
             chore.required_assignees_count if chore.is_multi_assignee else 1
         )

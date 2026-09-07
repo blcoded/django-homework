@@ -446,6 +446,12 @@ class ChoreAssignment(models.Model):
     )
     missed_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True, default="")
+    proof_image = models.FileField(
+        upload_to="chore_proofs/%Y/%m/",
+        null=True,
+        blank=True,
+        help_text="Uploaded photo evidence of chore completion.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
