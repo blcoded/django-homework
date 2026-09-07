@@ -124,9 +124,10 @@ class ChoreOccurrenceLifecycleTestCase(TestCase):
         # Now complete the current occurrence
         occ1.status = ChoreOccurrence.STATUS_ACTIVE
         occ1.save()
-        ChoreAssignment.objects.create(occurrence=occ1, user=self.user_a)
+        ChoreAssignment.objects.get_or_create(occurrence=occ1, user=self.user_a)
 
         OccurrenceService.complete_occurrence(occurrence=occ1, user=self.user_a)
+
         occ1.refresh_from_db()
         self.assertEqual(occ1.status, ChoreOccurrence.STATUS_COMPLETED)
 

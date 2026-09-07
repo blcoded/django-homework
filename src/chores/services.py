@@ -78,12 +78,18 @@ class OccurrenceService:
             else ChoreOccurrence.STATUS_UPCOMING
         )
 
-        return ChoreOccurrence.objects.create(
+        occurrence = ChoreOccurrence.objects.create(
             chore=chore,
             status=initial_status,
             scheduled_start=scheduled_start,
             due_date=due_date,
         )
+
+        from .assignment import FairAssignmentEngine
+        FairAssignmentEngine.assign_occurrence(occurrence, current_time=now)
+
+        return occurrence
+
 
     @staticmethod
     def activate_upcoming_occurrences(current_time=None) -> list[ChoreOccurrence]:
