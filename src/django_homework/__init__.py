@@ -4,6 +4,12 @@ django_homework package initialization.
 
 __version__ = "0.1.0"
 
+try:
+    from .celery import app as celery_app
+    __all__ = ("celery_app",)
+except ImportError:  # pragma: no cover
+    pass
+
 
 def main() -> None:
     """CLI entrypoint delegating to Django management."""

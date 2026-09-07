@@ -1,0 +1,1 @@
+"""Chores management package."""

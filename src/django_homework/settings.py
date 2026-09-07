@@ -168,4 +168,27 @@ DEFAULT_FROM_EMAIL = os.environ.get(
     "DEFAULT_FROM_EMAIL", "noreply@householdchores.local"
 )
 
+# Celery Configuration
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_BEAT_SCHEDULE = {
+    "run-all-periodic-tasks-every-5-minutes": {
+        "task": "chores.tasks.run_all_periodic_tasks",
+        "schedule": 300.0,
+    },
+    "activate-upcoming-occurrences-every-minute": {
+        "task": "chores.tasks.check_and_activate_occurrences",
+        "schedule": 60.0,
+    },
+    "detect-missed-occurrences-every-5-minutes": {
+        "task": "chores.tasks.check_and_transition_missed_occurrences",
+        "schedule": 300.0,
+    },
+    "dispatch-reminders-every-15-minutes": {
+        "task": "chores.tasks.dispatch_scheduled_reminders",
+        "schedule": 900.0,
+    },
+}
+
 
