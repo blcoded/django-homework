@@ -1,3 +1,4 @@
+from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -5,9 +6,14 @@ from rest_framework.response import Response
 
 from households.models import HouseholdMember
 from households.permissions import IsActiveHouseholdMember
+from households.serializers import VoteActionSerializer
 from .heuristic import suggest_effort_level
-from .models import Chore
-from .serializers import ChoreSerializer, EffortSuggestionSerializer
+from .models import Chore, ChoreSuggestion, ChoreSuggestionVote
+from .serializers import (
+    ChoreSerializer,
+    ChoreSuggestionSerializer,
+    EffortSuggestionSerializer,
+)
 
 
 class ChoreViewSet(viewsets.ModelViewSet):
@@ -39,7 +45,6 @@ class ChoreViewSet(viewsets.ModelViewSet):
             qs = qs.filter(is_archived=False)
 
         return qs
-
 
     def perform_destroy(self, instance):
         """Soft delete: archive the chore instead of deleting from database."""
@@ -85,5 +90,83 @@ class ChoreViewSet(viewsets.ModelViewSet):
                 "suggested_effort": suggested,
                 "points": points,
             },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ChoreSuggestionViewSet(viewsets.ModelViewSet):
+    """
+    Endpoints for anonymous chore suggestions and majority voting.
+    The creator's identity is never exposed.
+    """
+
+    permission_classes = [IsAuthenticated, IsActiveHouseholdMember]
+    serializer_class = ChoreSuggestionSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        active_households = HouseholdMember.objects.filter(
+            user=user, status=HouseholdMember.STATUS_ACTIVE
+        ).values_list("household_id", flat=True)
+
+        qs = ChoreSuggestion.objects.filter(household_id__in=active_households)
+
+        # Check and update expirations
+        for s in qs.filter(status=ChoreSuggestion.STATUS_PENDING):
+            s.check_expiration()
+
+        household_id = self.request.query_params.get("household")
+        if household_id:
+            qs = qs.filter(household_id=household_id)
+
+        status_filter = self.request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
+        return qs
+
+    @action(detail=True, methods=["post"], url_path="vote")
+    def vote(self, request, pk=None):
+        """Cast an approve/reject vote on an anonymous chore suggestion."""
+        suggestion = self.get_object()
+        suggestion.check_expiration()
+
+        if suggestion.status != ChoreSuggestion.STATUS_PENDING:
+            return Response(
+                {
+                    "detail": f"Cannot vote on suggestion with status '{suggestion.status}'."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = VoteActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        approved = serializer.validated_data["approved"]
+
+        vote, _ = ChoreSuggestionVote.objects.update_or_create(
+            suggestion=suggestion,
+            voter=request.user,
+            defaults={"approved": approved},
+        )
+
+        suggestion.evaluate_votes()
+        serializer = self.get_serializer(suggestion)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["post"], url_path="check-expirations")
+    def check_expirations(self, request):
+        """Transition any overdue unreviewed suggestions to expired."""
+        now = timezone.now()
+        expired_count = 0
+        pending = ChoreSuggestion.objects.filter(
+            status=ChoreSuggestion.STATUS_PENDING, expires_at__lte=now
+        )
+        for s in pending:
+            s.status = ChoreSuggestion.STATUS_EXPIRED
+            s.save(update_fields=["status", "updated_at"])
+            expired_count += 1
+
+        return Response(
+            {"expired_count": expired_count, "checked_at": now},
             status=status.HTTP_200_OK,
         )

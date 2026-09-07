@@ -1,7 +1,10 @@
 from datetime import timedelta
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils import timezone
 from households.models import Household
+
 
 
 class Chore(models.Model):
@@ -162,3 +165,162 @@ class Chore(models.Model):
         if self.deadline_mode == self.DEADLINE_NONE or not self.deadline_window_hours:
             return None
         return start_time + timedelta(hours=self.deadline_window_hours)
+
+
+def default_suggestion_expiry():
+    return timezone.now() + timedelta(days=7)
+
+
+class ChoreSuggestion(models.Model):
+    """
+    Anonymous chore suggestion proposed by an active roommate.
+    The creator's identity is strictly anonymous to roommates and API consumers.
+    Requires majority approval from active roommates to become an active Chore.
+    Expires automatically after a fixed period if not reviewed.
+    """
+
+    STATUS_PENDING = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_REJECTED = "rejected"
+    STATUS_EXPIRED = "expired"
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_REJECTED, "Rejected"),
+        (STATUS_EXPIRED, "Expired"),
+    ]
+
+    household = models.ForeignKey(
+        Household, on_delete=models.CASCADE, related_name="suggestions"
+    )
+    # Stored for internal tracking, NEVER exposed to users/API
+    creator = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="submitted_suggestions",
+    )
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True, default="")
+    effort_level = models.CharField(
+        max_length=20, choices=Chore.EFFORT_CHOICES, default=Chore.EFFORT_MEDIUM
+    )
+    recurrence_type = models.CharField(
+        max_length=20, choices=Chore.RECURRENCE_CHOICES, default=Chore.RECURRENCE_NONE
+    )
+    recurrence_rule = models.JSONField(default=dict, blank=True)
+    deadline_mode = models.CharField(
+        max_length=20, choices=Chore.DEADLINE_CHOICES, default=Chore.DEADLINE_NONE
+    )
+    deadline_window_hours = models.PositiveIntegerField(null=True, blank=True)
+    is_multi_assignee = models.BooleanField(default=False)
+    required_assignees_count = models.PositiveIntegerField(default=1)
+
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING
+    )
+    approved_chore = models.OneToOneField(
+        Chore,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="source_suggestion",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(default=default_suggestion_expiry)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Suggestion: {self.title} ({self.household.name}) - {self.status}"
+
+    def check_expiration(self, current_time=None):
+        """Transition unreviewed proposal to expired if expiry time has passed."""
+        if self.status != self.STATUS_PENDING:
+            return self.status
+
+        now = current_time or timezone.now()
+        if now >= self.expires_at:
+            self.status = self.STATUS_EXPIRED
+            self.save(update_fields=["status", "updated_at"])
+        return self.status
+
+    def evaluate_votes(self):
+        """
+        Evaluate majority vote across all active household roommates.
+        Threshold: strictly greater than 50% of active members (i.e. (N // 2) + 1).
+        If threshold reached, converts suggestion to an active Chore automatically.
+        """
+        if self.status != self.STATUS_PENDING:
+            return self.status
+
+        # Check if already expired
+        if self.check_expiration() == self.STATUS_EXPIRED:
+            return self.status
+
+        active_members = self.household.get_active_members()
+        total_active_count = active_members.count()
+        if total_active_count == 0:
+            return self.status
+
+        majority_needed = (total_active_count // 2) + 1
+        active_user_ids = set(active_members.values_list("user_id", flat=True))
+
+        valid_votes = self.votes.filter(voter_id__in=active_user_ids)
+        approve_count = valid_votes.filter(approved=True).count()
+        reject_count = valid_votes.filter(approved=False).count()
+
+        if approve_count >= majority_needed:
+            # Majority approval reached! Automatically convert into active Chore
+            self.status = self.STATUS_APPROVED
+            chore = Chore.objects.create(
+                household=self.household,
+                title=self.title,
+                description=self.description,
+                effort_level=self.effort_level,
+                recurrence_type=self.recurrence_type,
+                recurrence_rule=self.recurrence_rule,
+                deadline_mode=self.deadline_mode,
+                deadline_window_hours=self.deadline_window_hours,
+                is_multi_assignee=self.is_multi_assignee,
+                required_assignees_count=self.required_assignees_count,
+            )
+            self.approved_chore = chore
+            self.save(update_fields=["status", "approved_chore", "updated_at"])
+            return self.status
+
+        # If reject votes make majority mathematically impossible
+        max_possible_approvals = total_active_count - reject_count
+        if max_possible_approvals < majority_needed:
+            self.status = self.STATUS_REJECTED
+            self.save(update_fields=["status", "updated_at"])
+
+        return self.status
+
+
+class ChoreSuggestionVote(models.Model):
+    """Vote on an anonymous chore suggestion."""
+
+    suggestion = models.ForeignKey(
+        ChoreSuggestion, on_delete=models.CASCADE, related_name="votes"
+    )
+    voter = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="suggestion_votes",
+    )
+    approved = models.BooleanField()
+    voted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("suggestion", "voter")
+
+    def __str__(self):
+        vote_str = "Approve" if self.approved else "Reject"
+        return f"{self.voter}: {vote_str} for {self.suggestion.title}"
+
