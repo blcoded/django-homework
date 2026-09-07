@@ -90,6 +90,20 @@ class HouseholdViewSet(viewsets.ModelViewSet):
                 user=request.user,
                 defaults={"status": HouseholdMember.STATUS_ACTIVE},
             )
+            try:
+                from activity.models import ActivityLog
+                from activity.services import ActivityService
+
+                u_name = request.user.display_name or request.user.email
+                ActivityService.log_event(
+                    household=household,
+                    event_type=ActivityLog.EVENT_MEMBER_JOINED,
+                    actor=request.user,
+                    title=f"{u_name} joined the household",
+                    description="Joined via invite code.",
+                )
+            except Exception:
+                pass
             return Response(
                 {
                     "status": "joined",

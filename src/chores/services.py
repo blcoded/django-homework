@@ -237,4 +237,29 @@ class OccurrenceService:
                     chore=chore, from_time=occurrence.completed_at
                 )
 
+            try:
+                from activity.models import ActivityLog
+                from activity.services import ActivityService
+
+                is_late = occurrence.status == ChoreOccurrence.STATUS_COMPLETED_LATE or occurrence.was_missed
+                event_type = (
+                    ActivityLog.EVENT_CHORE_COMPLETED_LATE
+                    if is_late
+                    else ActivityLog.EVENT_CHORE_COMPLETED
+                )
+                actor_name = user.display_name or user.email
+                title = f"{actor_name} completed {chore.title} late" if is_late else f"{actor_name} completed {chore.title}"
+                ActivityService.log_event(
+                    household=chore.household,
+                    event_type=event_type,
+                    actor=user,
+                    chore=chore,
+                    occurrence=occurrence,
+                    title=title,
+                    description=notes,
+                    metadata={"notes": notes, "has_proof": bool(proof_image)},
+                )
+            except Exception:
+                pass
+
         return occurrence

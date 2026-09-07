@@ -445,6 +445,22 @@ class ChoreOccurrence(models.Model):
                 assignment.missed_at = now
                 assignment.save(update_fields=["was_missed", "missed_at", "updated_at"])
 
+            try:
+                from activity.models import ActivityLog
+                from activity.services import ActivityService
+
+                ActivityService.log_event(
+                    household=self.chore.household,
+                    event_type=ActivityLog.EVENT_CHORE_MISSED,
+                    chore=self.chore,
+                    occurrence=self,
+                    title=f"{self.chore.title} was missed",
+                    description=f"Deadline passed for {self.chore.title}.",
+                    metadata={"due_date": str(self.due_date)},
+                )
+            except Exception:
+                pass
+
     def complete(self, completed_time=None):
         """Transition to COMPLETED or COMPLETED_LATE."""
         now = completed_time or timezone.now()
@@ -473,6 +489,22 @@ class ChoreOccurrence(models.Model):
                 "updated_at",
             ]
         )
+        try:
+            from activity.models import ActivityLog
+            from activity.services import ActivityService
+
+            ActivityService.log_event(
+                household=self.chore.household,
+                event_type=ActivityLog.EVENT_CHORE_VERIFIED,
+                actor=verified_by,
+                chore=self.chore,
+                occurrence=self,
+                title=f"{verified_by.display_name or verified_by.email} verified completion of {self.chore.title}",
+                description=notes,
+                metadata={"notes": notes},
+            )
+        except Exception:
+            pass
 
     def dispute(self, disputed_by=None, reason="", disputed_time=None):
         """
@@ -504,6 +536,23 @@ class ChoreOccurrence(models.Model):
                 "updated_at",
             ]
         )
+        try:
+            from activity.models import ActivityLog
+            from activity.services import ActivityService
+
+            actor_name = disputed_by.display_name or disputed_by.email if disputed_by else "A roommate"
+            ActivityService.log_event(
+                household=self.chore.household,
+                event_type=ActivityLog.EVENT_CHORE_DISPUTED,
+                actor=disputed_by,
+                chore=self.chore,
+                occurrence=self,
+                title=f"{actor_name} disputed completion of {self.chore.title}",
+                description=reason,
+                metadata={"reason": reason},
+            )
+        except Exception:
+            pass
 
     def resolve_dispute(self, resolved_by=None, resolution_notes=""):
         """Resolve dispute, transitioning back to completed while preserving dispute audit trail."""
@@ -696,6 +745,34 @@ class ChoreSwapRequest(models.Model):
         self.status = self.STATUS_ACCEPTED
         self.responded_at = now
         self.save(update_fields=["status", "responded_at", "updated_at"])
+
+        try:
+            from activity.models import ActivityLog
+            from activity.services import ActivityService
+
+            p_name = self.proposer.display_name or self.proposer.email
+            r_name = self.recipient.display_name or self.recipient.email
+            p_chore_title = self.proposer_occurrence.chore.title
+            r_chore_title = self.recipient_occurrence.chore.title if self.recipient_occurrence else "no exchange chore"
+
+            ActivityService.log_event(
+                household=self.household,
+                event_type=ActivityLog.EVENT_CHORE_SWAP_ACCEPTED,
+                actor=user or self.recipient,
+                chore=self.proposer_occurrence.chore,
+                occurrence=self.proposer_occurrence,
+                title=f"Chore swap accepted between {p_name} and {r_name}",
+                description=f"Swapped '{p_chore_title}' and '{r_chore_title}'.",
+                metadata={
+                    "proposer_id": self.proposer_id,
+                    "recipient_id": self.recipient_id,
+                    "proposer_occurrence_id": self.proposer_occurrence_id,
+                    "recipient_occurrence_id": self.recipient_occurrence_id,
+                },
+            )
+        except Exception:
+            pass
+
         return self
 
     def decline(self, user=None):

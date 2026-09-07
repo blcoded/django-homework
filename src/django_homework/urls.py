@@ -32,6 +32,7 @@ urlpatterns = [
     path("api/households/", include("households.urls")),
     path("api/chores/", include("chores.urls")),
     path("api/notifications/", include("notifications.urls")),
+    path("api/activity/", include("activity.urls")),
 ]
 
 

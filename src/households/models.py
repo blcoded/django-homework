@@ -55,11 +55,35 @@ class Household(models.Model):
         self.is_paused = True
         self.paused_at = timezone.now()
         self.save(update_fields=["is_paused", "paused_at", "updated_at"])
+        try:
+            from activity.models import ActivityLog
+            from activity.services import ActivityService
+
+            ActivityService.log_event(
+                household=self,
+                event_type=ActivityLog.EVENT_HOUSEHOLD_PAUSED,
+                title="Household chores paused",
+                description="Household chore activations and missed penalties have been paused.",
+            )
+        except Exception:
+            pass
 
     def resume_chores(self):
         self.is_paused = False
         self.paused_at = None
         self.save(update_fields=["is_paused", "paused_at", "updated_at"])
+        try:
+            from activity.models import ActivityLog
+            from activity.services import ActivityService
+
+            ActivityService.log_event(
+                household=self,
+                event_type=ActivityLog.EVENT_HOUSEHOLD_RESUMED,
+                title="Household chores resumed",
+                description="Household chore activity and rotation have resumed.",
+            )
+        except Exception:
+            pass
 
     def get_active_members(self):
         return self.members.filter(status=HouseholdMember.STATUS_ACTIVE)
@@ -167,6 +191,20 @@ class JoinRequest(models.Model):
                 user=self.user,
                 defaults={"status": HouseholdMember.STATUS_ACTIVE},
             )
+            try:
+                from activity.models import ActivityLog
+                from activity.services import ActivityService
+
+                u_name = self.user.display_name or self.user.email
+                ActivityService.log_event(
+                    household=self.household,
+                    event_type=ActivityLog.EVENT_MEMBER_JOINED,
+                    actor=self.user,
+                    title=f"{u_name} joined the household",
+                    description="Join request approved by all roommates.",
+                )
+            except Exception:
+                pass
         return self.status
 
 
@@ -247,6 +285,20 @@ class LeaveRequest(models.Model):
             from .departure import DepartureRebalanceService
 
             DepartureRebalanceService.rebalance_departing_member_chores(self.member)
+            try:
+                from activity.models import ActivityLog
+                from activity.services import ActivityService
+
+                u_name = self.member.user.display_name or self.member.user.email
+                ActivityService.log_event(
+                    household=self.household,
+                    event_type=ActivityLog.EVENT_MEMBER_LEFT,
+                    actor=self.member.user,
+                    title=f"{u_name} left the household",
+                    description="Solo member departure.",
+                )
+            except Exception:
+                pass
             return self.status
 
         votes = self.votes.filter(voter_id__in=other_active_user_ids)
@@ -266,6 +318,20 @@ class LeaveRequest(models.Model):
             from .departure import DepartureRebalanceService
 
             DepartureRebalanceService.rebalance_departing_member_chores(self.member)
+            try:
+                from activity.models import ActivityLog
+                from activity.services import ActivityService
+
+                u_name = self.member.user.display_name or self.member.user.email
+                ActivityService.log_event(
+                    household=self.household,
+                    event_type=ActivityLog.EVENT_MEMBER_LEFT,
+                    actor=self.member.user,
+                    title=f"{u_name} left the household",
+                    description="Departure approved by household.",
+                )
+            except Exception:
+                pass
 
         return self.status
 
@@ -371,6 +437,21 @@ class AbsenceRequest(models.Model):
             self.status = self.STATUS_APPROVED
             self.save(update_fields=["status", "updated_at"])
             self.apply_absence()
+            try:
+                from activity.models import ActivityLog
+                from activity.services import ActivityService
+
+                u_name = self.member.user.display_name or self.member.user.email
+                ActivityService.log_event(
+                    household=self.household,
+                    event_type=ActivityLog.EVENT_MEMBER_ABSENCE_APPROVED,
+                    actor=self.member.user,
+                    title=f"Absence approved for {u_name}",
+                    description=self.reason,
+                    metadata={"start_date": str(self.start_date), "end_date": str(self.end_date)},
+                )
+            except Exception:
+                pass
             return self.status
 
         votes = self.votes.filter(voter_id__in=other_active_user_ids)
@@ -386,6 +467,21 @@ class AbsenceRequest(models.Model):
             self.status = self.STATUS_APPROVED
             self.save(update_fields=["status", "updated_at"])
             self.apply_absence()
+            try:
+                from activity.models import ActivityLog
+                from activity.services import ActivityService
+
+                u_name = self.member.user.display_name or self.member.user.email
+                ActivityService.log_event(
+                    household=self.household,
+                    event_type=ActivityLog.EVENT_MEMBER_ABSENCE_APPROVED,
+                    actor=self.member.user,
+                    title=f"Absence approved for {u_name}",
+                    description=self.reason,
+                    metadata={"start_date": str(self.start_date), "end_date": str(self.end_date)},
+                )
+            except Exception:
+                pass
 
         return self.status
 

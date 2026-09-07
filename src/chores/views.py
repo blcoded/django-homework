@@ -345,6 +345,49 @@ class ChoreOccurrenceViewSet(viewsets.ReadOnlyModelViewSet):
         )
         return Response(stats, status=status.HTTP_200_OK)
 
+    @action(detail=False, methods=["get"], url_path="history")
+    def history(self, request):
+        """
+        Filterable historical archive of past chore occurrences.
+        Allows filtering by date range (start_date, end_date), specific chore,
+        assignee, and status (completed, completed_late, missed, disputed).
+        """
+        from django.utils.dateparse import parse_date, parse_datetime
+
+        qs = self.get_queryset()
+
+        assignee_id = request.query_params.get("assignee")
+        if assignee_id:
+            qs = qs.filter(assignments__user_id=assignee_id)
+
+        start_date = request.query_params.get("start_date")
+        if start_date:
+            parsed_dt = parse_datetime(start_date)
+            if parsed_dt:
+                if timezone.is_naive(parsed_dt):
+                    parsed_dt = timezone.make_aware(parsed_dt)
+                qs = qs.filter(scheduled_start__gte=parsed_dt)
+            else:
+                parsed_d = parse_date(start_date)
+                if parsed_d:
+                    qs = qs.filter(scheduled_start__date__gte=parsed_d)
+
+        end_date = request.query_params.get("end_date")
+        if end_date:
+            parsed_dt = parse_datetime(end_date)
+            if parsed_dt:
+                if timezone.is_naive(parsed_dt):
+                    parsed_dt = timezone.make_aware(parsed_dt)
+                qs = qs.filter(scheduled_start__lte=parsed_dt)
+            else:
+                parsed_d = parse_date(end_date)
+                if parsed_d:
+                    qs = qs.filter(scheduled_start__date__lte=parsed_d)
+
+        qs = qs.distinct().order_by("-scheduled_start", "-created_at")
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
     @action(detail=True, methods=["post"], url_path="verify")
     def verify(self, request, pk=None):
         """
