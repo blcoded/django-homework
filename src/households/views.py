@@ -10,6 +10,8 @@ from .models import (
     JoinRequestVote,
     LeaveRequest,
     LeaveRequestVote,
+    AbsenceRequest,
+    AbsenceRequestVote,
 )
 from .permissions import IsActiveHouseholdMember
 from .serializers import (
@@ -20,6 +22,8 @@ from .serializers import (
     JoinRequestSerializer,
     LeaveRequestSerializer,
     VoteActionSerializer,
+    AbsenceRequestSerializer,
+    AbsenceRequestVoteSerializer,
 )
 
 
@@ -32,10 +36,13 @@ class HouseholdViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsActiveHouseholdMember]
 
     def get_queryset(self):
-        # Users only see households they actively belong to
+        # Users see households they belong to as active or paused member
         return Household.objects.filter(
             members__user=self.request.user,
-            members__status=HouseholdMember.STATUS_ACTIVE,
+            members__status__in=[
+                HouseholdMember.STATUS_ACTIVE,
+                HouseholdMember.STATUS_PAUSED,
+            ],
         ).distinct()
 
     def get_serializer_class(self):
@@ -44,7 +51,7 @@ class HouseholdViewSet(viewsets.ModelViewSet):
         return HouseholdSerializer
 
     def get_permissions(self):
-        if self.action in ["create", "list", "join"]:
+        if self.action in ["create", "list", "join", "end_absence_request"]:
             return [IsAuthenticated()]
         return [IsAuthenticated(), IsActiveHouseholdMember()]
 
@@ -263,3 +270,245 @@ class HouseholdViewSet(viewsets.ModelViewSet):
                 {"detail": "Not a member of this household."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+
+    @action(detail=True, methods=["get", "post"], url_path="absences")
+    def absences(self, request, pk=None):
+        """
+        GET: List all absence requests for this household.
+        POST: Active member submits an absence request with preset or custom dates.
+        Requires unanimous approval from all other active roommates.
+        """
+        household = self.get_object()
+
+        if request.method == "GET":
+            reqs = household.absence_requests.all()
+            status_filter = request.query_params.get("status")
+            if status_filter:
+                reqs = reqs.filter(status=status_filter)
+            serializer = AbsenceRequestSerializer(reqs, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        membership = household.members.filter(
+            user=request.user, status=HouseholdMember.STATUS_ACTIVE
+        ).first()
+        if not membership:
+            return Response(
+                {"detail": "You are not an active member of this household."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = AbsenceRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        absence_req = AbsenceRequest.objects.create(
+            household=household,
+            member=membership,
+            start_date=serializer.validated_data["start_date"],
+            end_date=serializer.validated_data["end_date"],
+            preset=serializer.validated_data.get("preset", ""),
+            reason=serializer.validated_data.get("reason", ""),
+            status=AbsenceRequest.STATUS_PENDING,
+        )
+
+        # Evaluate votes (auto-approves if solo member)
+        absence_req.evaluate_votes()
+        absence_req.refresh_from_db()
+
+        return Response(
+            {
+                "status": absence_req.status,
+                "absence_request": AbsenceRequestSerializer(absence_req).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="absences/(?P<request_id>[^/.]+)/vote",
+    )
+    def vote_absence_request(self, request, pk=None, request_id=None):
+        """Other active members vote on a roommate's absence request."""
+        household = self.get_object()
+        absence_req = household.absence_requests.filter(
+            id=request_id, status=AbsenceRequest.STATUS_PENDING
+        ).first()
+        if not absence_req:
+            return Response(
+                {"detail": "Pending absence request not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if absence_req.member.user == request.user:
+            return Response(
+                {"detail": "You cannot vote on your own absence request."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = VoteActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        approved = serializer.validated_data["approved"]
+
+        AbsenceRequestVote.objects.update_or_create(
+            absence_request=absence_req,
+            voter=request.user,
+            defaults={"approved": approved},
+        )
+
+        absence_req.evaluate_votes()
+        absence_req.refresh_from_db()
+
+        return Response(
+            AbsenceRequestSerializer(absence_req).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="absences/(?P<request_id>[^/.]+)/end",
+    )
+    def end_absence_request(self, request, pk=None, request_id=None):
+        """
+        End an approved absence, restoring the roommate to active rotation without displacing active chores.
+        """
+        household = self.get_object()
+        absence_req = household.absence_requests.filter(
+            id=request_id, status=AbsenceRequest.STATUS_APPROVED
+        ).first()
+        if not absence_req:
+            return Response(
+                {"detail": "Approved absence request not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        absence_req.end_absence()
+        absence_req.refresh_from_db()
+
+        return Response(
+            {
+                "status": "completed",
+                "message": "Absence ended. Member restored to active rotation without displacing active chores.",
+                "absence_request": AbsenceRequestSerializer(absence_req).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class AbsenceRequestViewSet(viewsets.ModelViewSet):
+    """
+    Direct endpoint for absence requests: /api/households/absences/
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = AbsenceRequestSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        household_ids = HouseholdMember.objects.filter(
+            user=user
+        ).values_list("household_id", flat=True)
+        return AbsenceRequest.objects.filter(household_id__in=household_ids)
+
+    def create(self, request, *args, **kwargs):
+        household_id = request.data.get("household")
+        if not household_id:
+            return Response(
+                {"household": ["This field is required."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        membership = HouseholdMember.objects.filter(
+            household_id=household_id, user=request.user, status=HouseholdMember.STATUS_ACTIVE
+        ).first()
+        if not membership:
+            return Response(
+                {"detail": "You are not an active member of this household."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        absence_req = AbsenceRequest.objects.create(
+            household_id=household_id,
+            member=membership,
+            start_date=serializer.validated_data["start_date"],
+            end_date=serializer.validated_data["end_date"],
+            preset=serializer.validated_data.get("preset", ""),
+            reason=serializer.validated_data.get("reason", ""),
+            status=AbsenceRequest.STATUS_PENDING,
+        )
+        absence_req.evaluate_votes()
+        absence_req.refresh_from_db()
+
+        return Response(
+            {
+                "status": absence_req.status,
+                "absence_request": AbsenceRequestSerializer(absence_req).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"], url_path="vote")
+    def vote(self, request, pk=None):
+        absence_req = self.get_object()
+        if absence_req.status != AbsenceRequest.STATUS_PENDING:
+            return Response(
+                {"detail": "Absence request is not pending."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if absence_req.member.user == request.user:
+            return Response(
+                {"detail": "You cannot vote on your own absence request."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check voter is active member of the household
+        is_active = HouseholdMember.objects.filter(
+            household=absence_req.household,
+            user=request.user,
+            status=HouseholdMember.STATUS_ACTIVE,
+        ).exists()
+        if not is_active:
+            return Response(
+                {"detail": "You are not an active member of this household."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = VoteActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        AbsenceRequestVote.objects.update_or_create(
+            absence_request=absence_req,
+            voter=request.user,
+            defaults={"approved": serializer.validated_data["approved"]},
+        )
+        absence_req.evaluate_votes()
+        absence_req.refresh_from_db()
+
+        return Response(
+            AbsenceRequestSerializer(absence_req).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["post"], url_path="end")
+    def end(self, request, pk=None):
+        absence_req = self.get_object()
+        if absence_req.status != AbsenceRequest.STATUS_APPROVED:
+            return Response(
+                {"detail": "Only approved absence requests can be ended."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        absence_req.end_absence()
+        absence_req.refresh_from_db()
+
+        return Response(
+            {
+                "status": "completed",
+                "message": "Absence ended. Member restored to active rotation without displacing active chores.",
+                "absence_request": AbsenceRequestSerializer(absence_req).data,
+            },
+            status=status.HTTP_200_OK,
+        )

@@ -261,3 +261,125 @@ class LeaveRequestVote(models.Model):
     def __str__(self):
         decision = "Approve" if self.approved else "Reject"
         return f"{self.voter}: {decision} for {self.leave_request}"
+
+
+class AbsenceRequest(models.Model):
+    """
+    Temporary member absence request requiring unanimous household approval.
+    Places the roommate into a paused status for preset or custom dates,
+    and automatically rebalances pending chores among available active roommates.
+    """
+
+    STATUS_PENDING = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_REJECTED = "rejected"
+    STATUS_COMPLETED = "completed"
+    STATUS_CANCELLED = "cancelled"
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_REJECTED, "Rejected"),
+        (STATUS_COMPLETED, "Completed"),
+        (STATUS_CANCELLED, "Cancelled"),
+    ]
+
+    household = models.ForeignKey(
+        Household, on_delete=models.CASCADE, related_name="absence_requests"
+    )
+    member = models.ForeignKey(
+        HouseholdMember, on_delete=models.CASCADE, related_name="absence_requests"
+    )
+    start_date = models.DateField()
+    end_date = models.DateField()
+    preset = models.CharField(max_length=50, blank=True, default="")
+    reason = models.CharField(max_length=255, blank=True, default="")
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"AbsenceRequest: {self.member.user} in {self.household.name} ({self.start_date} to {self.end_date}) [{self.status}]"
+
+    def apply_absence(self):
+        """
+        Transition member status to paused and trigger automated chore rebalancing.
+        """
+        self.member.status = HouseholdMember.STATUS_PAUSED
+        self.member.save(update_fields=["status", "updated_at"])
+
+        from .absence import AbsenceRebalanceService
+        AbsenceRebalanceService.rebalance_paused_member_chores(self.member)
+
+    def end_absence(self):
+        """
+        Complete absence and restore member to active status without displacing active chores.
+        """
+        self.status = self.STATUS_COMPLETED
+        self.save(update_fields=["status", "updated_at"])
+        self.member.status = HouseholdMember.STATUS_ACTIVE
+        self.member.save(update_fields=["status", "updated_at"])
+
+    def evaluate_votes(self):
+        """
+        Enforce unanimous consent from all other active members in the household.
+        If no other active members exist, auto-approves.
+        """
+        if self.status != self.STATUS_PENDING:
+            return self.status
+
+        other_active_members = self.household.get_active_members().exclude(
+            id=self.member_id
+        )
+        other_active_user_ids = set(
+            other_active_members.values_list("user_id", flat=True)
+        )
+
+        if len(other_active_user_ids) == 0:
+            self.status = self.STATUS_APPROVED
+            self.save(update_fields=["status", "updated_at"])
+            self.apply_absence()
+            return self.status
+
+        votes = self.votes.filter(voter_id__in=other_active_user_ids)
+        if votes.filter(approved=False).exists():
+            self.status = self.STATUS_REJECTED
+            self.save(update_fields=["status", "updated_at"])
+            return self.status
+
+        approved_voter_ids = set(
+            votes.filter(approved=True).values_list("voter_id", flat=True)
+        )
+        if other_active_user_ids.issubset(approved_voter_ids):
+            self.status = self.STATUS_APPROVED
+            self.save(update_fields=["status", "updated_at"])
+            self.apply_absence()
+
+        return self.status
+
+
+class AbsenceRequestVote(models.Model):
+    """Vote cast by another active roommate on an absence request."""
+
+    absence_request = models.ForeignKey(
+        AbsenceRequest, on_delete=models.CASCADE, related_name="votes"
+    )
+    voter = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="absence_votes",
+    )
+    approved = models.BooleanField()
+    voted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("absence_request", "voter")
+
+    def __str__(self):
+        decision = "Approve" if self.approved else "Reject"
+        return f"{self.voter}: {decision} for {self.absence_request}"
