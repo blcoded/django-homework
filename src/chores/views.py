@@ -19,9 +19,11 @@ from .models import (
 )
 from .serializers import (
     ChoreCompletionSerializer,
+    ChoreDisputeSerializer,
     ChoreOccurrenceSerializer,
     ChoreSerializer,
     ChoreSuggestionSerializer,
+    ChoreVerificationSerializer,
     EffortSuggestionSerializer,
 )
 from .rotation import HiddenRotationService
@@ -340,4 +342,81 @@ class ChoreOccurrenceViewSet(viewsets.ReadOnlyModelViewSet):
             household_id=request.query_params.get("household"),
         )
         return Response(stats, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="verify")
+    def verify(self, request, pk=None):
+        """
+        Formally verify a completed chore occurrence.
+        Only active household members can verify.
+        In multi-member households, roommate cannot verify their own chore.
+        """
+        occurrence = self.get_object()
+        if occurrence.status not in [
+            ChoreOccurrence.STATUS_COMPLETED,
+            ChoreOccurrence.STATUS_COMPLETED_LATE,
+        ]:
+            return Response(
+                {
+                    "detail": f"Cannot verify occurrence with status '{occurrence.status}'. It must be completed first."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        household = occurrence.chore.household
+        if (
+            household.get_active_members().count() > 1
+            and occurrence.assignments.filter(user=request.user, completed=True).exists()
+        ):
+            return Response(
+                {
+                    "detail": "You cannot verify your own chore completion; another roommate must verify."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = ChoreVerificationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        notes = serializer.validated_data.get("notes", "")
+
+        occurrence.verify(verified_by=request.user, notes=notes)
+        return Response(self.get_serializer(occurrence).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="dispute")
+    def dispute(self, request, pk=None):
+        """
+        Flag an occurrence as Disputed with an explanation note without erasing
+        the underlying completion record, timestamps, or proof.
+        """
+        occurrence = self.get_object()
+        if occurrence.status not in [
+            ChoreOccurrence.STATUS_COMPLETED,
+            ChoreOccurrence.STATUS_COMPLETED_LATE,
+            ChoreOccurrence.STATUS_DISPUTED,
+        ]:
+            return Response(
+                {
+                    "detail": f"Cannot dispute occurrence with status '{occurrence.status}'."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = ChoreDisputeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        reason = serializer.validated_data["reason"]
+
+        occurrence.dispute(disputed_by=request.user, reason=reason)
+        return Response(self.get_serializer(occurrence).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="resolve-dispute")
+    def resolve_dispute(self, request, pk=None):
+        """Resolve a dispute, returning occurrence to completed while preserving dispute audit trail."""
+        occurrence = self.get_object()
+        if occurrence.status != ChoreOccurrence.STATUS_DISPUTED:
+            return Response(
+                {"detail": "Only occurrences in 'disputed' status can be resolved."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        notes = request.data.get("notes", "")
+        occurrence.resolve_dispute(resolved_by=request.user, resolution_notes=notes)
+        return Response(self.get_serializer(occurrence).data, status=status.HTTP_200_OK)
 

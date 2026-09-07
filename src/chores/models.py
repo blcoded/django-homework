@@ -367,6 +367,36 @@ class ChoreOccurrence(models.Model):
         default=False,
         help_text="Audit flag permanently preserving that this chore was missed past its deadline.",
     )
+    # Verification tracking fields
+    is_verified = models.BooleanField(
+        default=False,
+        help_text="Whether this chore completion was formally verified by a roommate.",
+    )
+    verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="verified_occurrences",
+    )
+    verified_at = models.DateTimeField(null=True, blank=True)
+    verification_notes = models.TextField(blank=True, default="")
+
+    # Audit-preserving dispute tracking fields
+    is_disputed = models.BooleanField(
+        default=False,
+        help_text="Whether this completion is flagged as disputed.",
+    )
+    disputed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="disputed_occurrences",
+    )
+    disputed_at = models.DateTimeField(null=True, blank=True)
+    dispute_reason = models.TextField(blank=True, default="")
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -417,11 +447,72 @@ class ChoreOccurrence(models.Model):
         self.completed_at = now
         self.save(update_fields=["status", "completed_at", "updated_at"])
 
-    def dispute(self):
-        """Transition to DISPUTED while preserving completion details."""
-        if self.status in [self.STATUS_COMPLETED, self.STATUS_COMPLETED_LATE]:
-            self.status = self.STATUS_DISPUTED
-            self.save(update_fields=["status", "updated_at"])
+    def verify(self, verified_by, notes="", verified_time=None):
+        """Formally record roommate completion verification."""
+        if self.status not in [self.STATUS_COMPLETED, self.STATUS_COMPLETED_LATE]:
+            raise ValueError(f"Cannot verify an occurrence with status '{self.status}'.")
+        now = verified_time or timezone.now()
+        self.is_verified = True
+        self.verified_by = verified_by
+        self.verified_at = now
+        self.verification_notes = notes
+        self.save(
+            update_fields=[
+                "is_verified",
+                "verified_by",
+                "verified_at",
+                "verification_notes",
+                "updated_at",
+            ]
+        )
+
+    def dispute(self, disputed_by=None, reason="", disputed_time=None):
+        """
+        Transition to DISPUTED while strictly preserving completion timestamps, notes, and proof.
+        Audit-preserving dispute mechanism.
+        """
+        if self.status not in [
+            self.STATUS_COMPLETED,
+            self.STATUS_COMPLETED_LATE,
+            self.STATUS_DISPUTED,
+        ]:
+            raise ValueError(f"Cannot dispute an occurrence with status '{self.status}'.")
+        now = disputed_time or timezone.now()
+        self.status = self.STATUS_DISPUTED
+        self.is_disputed = True
+        if disputed_by:
+            self.disputed_by = disputed_by
+        if disputed_time or not self.disputed_at:
+            self.disputed_at = now
+        if reason:
+            self.dispute_reason = reason
+        self.save(
+            update_fields=[
+                "status",
+                "is_disputed",
+                "disputed_by",
+                "disputed_at",
+                "dispute_reason",
+                "updated_at",
+            ]
+        )
+
+    def resolve_dispute(self, resolved_by=None, resolution_notes=""):
+        """Resolve dispute, transitioning back to completed while preserving dispute audit trail."""
+        if self.status != self.STATUS_DISPUTED:
+            raise ValueError("Only disputed occurrences can have their dispute resolved.")
+        self.status = self.STATUS_COMPLETED_LATE if self.was_missed else self.STATUS_COMPLETED
+        self.is_disputed = False
+        if resolution_notes:
+            self.verification_notes = f"Dispute resolved: {resolution_notes}"
+        self.save(
+            update_fields=[
+                "status",
+                "is_disputed",
+                "verification_notes",
+                "updated_at",
+            ]
+        )
 
 
 class ChoreAssignment(models.Model):

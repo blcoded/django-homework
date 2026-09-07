@@ -215,10 +215,20 @@ class ChoreCompletionSerializer(serializers.Serializer):
         return value
 
 
+class ChoreVerificationSerializer(serializers.Serializer):
+    notes = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class ChoreDisputeSerializer(serializers.Serializer):
+    reason = serializers.CharField(required=True, allow_blank=False)
+
+
 class ChoreOccurrenceSerializer(serializers.ModelSerializer):
     chore = ChoreSerializer(read_only=True)
     assignments = ChoreAssignmentSerializer(many=True, read_only=True)
     is_actionable = serializers.BooleanField(read_only=True)
+    verified_by = UserSerializer(read_only=True)
+    disputed_by = UserSerializer(read_only=True)
 
     class Meta:
         model = ChoreOccurrence
@@ -231,6 +241,14 @@ class ChoreOccurrenceSerializer(serializers.ModelSerializer):
             "completed_at",
             "missed_at",
             "was_missed",
+            "is_verified",
+            "verified_by",
+            "verified_at",
+            "verification_notes",
+            "is_disputed",
+            "disputed_by",
+            "disputed_at",
+            "dispute_reason",
             "assignments",
             "is_actionable",
             "created_at",
@@ -245,6 +263,14 @@ class ChoreOccurrenceSerializer(serializers.ModelSerializer):
             "completed_at",
             "missed_at",
             "was_missed",
+            "is_verified",
+            "verified_by",
+            "verified_at",
+            "verification_notes",
+            "is_disputed",
+            "disputed_by",
+            "disputed_at",
+            "dispute_reason",
             "assignments",
             "is_actionable",
             "created_at",
