@@ -90,8 +90,15 @@ class ChoreOccurrenceLifecycleTestCase(TestCase):
             status=ChoreOccurrence.STATUS_UPCOMING,
             scheduled_start=now - timedelta(minutes=15),
         )
+        chore_future = Chore.objects.create(
+            household=self.household,
+            title="Clean Windows",
+            effort_level=Chore.EFFORT_SMALL,
+            recurrence_type=Chore.RECURRENCE_INTERVAL,
+            recurrence_rule={"interval": 5, "unit": "days"},
+        )
         future_upcoming = ChoreOccurrence.objects.create(
-            chore=self.chore,
+            chore=chore_future,
             status=ChoreOccurrence.STATUS_UPCOMING,
             scheduled_start=now + timedelta(days=2),
         )

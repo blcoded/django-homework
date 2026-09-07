@@ -26,6 +26,7 @@ class ChoreSerializer(serializers.ModelSerializer):
     """Serializer for CRUD operations on household chores."""
 
     points = serializers.IntegerField(read_only=True)
+    next_up = serializers.SerializerMethodField()
 
     class Meta:
         model = Chore
@@ -43,10 +44,16 @@ class ChoreSerializer(serializers.ModelSerializer):
             "is_multi_assignee",
             "required_assignees_count",
             "is_archived",
+            "next_up",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "points", "created_at", "updated_at"]
+        read_only_fields = ["id", "points", "next_up", "created_at", "updated_at"]
+
+    def get_next_up(self, obj):
+        from .rotation import HiddenRotationService
+
+        return HiddenRotationService.get_next_up_data(obj)
 
     def validate_household(self, household):
         user = self.context["request"].user

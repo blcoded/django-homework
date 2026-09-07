@@ -365,6 +365,13 @@ class ChoreOccurrence(models.Model):
 
     class Meta:
         ordering = ["scheduled_start", "-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["chore"],
+                condition=models.Q(status="upcoming"),
+                name="unique_upcoming_occurrence_per_chore",
+            )
+        ]
 
     def __str__(self):
         return f"{self.chore.title} ({self.status}) @ {self.scheduled_start.strftime('%Y-%m-%d %H:%M')}"

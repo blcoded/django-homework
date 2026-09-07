@@ -21,6 +21,7 @@ from .serializers import (
     ChoreSuggestionSerializer,
     EffortSuggestionSerializer,
 )
+from .rotation import HiddenRotationService
 from .services import OccurrenceService
 
 
@@ -55,10 +56,55 @@ class ChoreViewSet(viewsets.ModelViewSet):
 
         return qs
 
+    def perform_create(self, serializer):
+        chore = serializer.save()
+        OccurrenceService.generate_next_occurrence(chore)
+
     def perform_destroy(self, instance):
         """Soft delete: archive the chore instead of deleting from database."""
         instance.is_archived = True
         instance.save(update_fields=["is_archived", "updated_at"])
+
+    @action(detail=True, methods=["get"], url_path="next-up")
+    def next_up(self, request, pk=None):
+        """Retrieve the single next upcoming occurrence and assigned roommate."""
+        chore = self.get_object()
+        data = HiddenRotationService.get_next_up_data(chore)
+        if not data:
+            return Response(
+                {"detail": "No upcoming occurrence scheduled for this chore.", "next_up": None},
+                status=status.HTTP_200_OK,
+            )
+        return Response(data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], url_path="next-up")
+    def list_next_up(self, request):
+        """List the single next upcoming occurrence for all active household chores."""
+        household_id = request.query_params.get("household")
+        data = HiddenRotationService.get_household_next_up_data(
+            user=request.user, household_id=household_id
+        )
+        return Response(data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["get"], url_path="rotation")
+    def rotation(self, request, pk=None):
+        """Disclose future rotation order - strictly prohibited to preserve surprise."""
+        return Response(
+            {
+                "detail": "Future rotation order is hidden to preserve fairness and the element of surprise. Only the immediate next assignee is exposed."
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    @action(detail=False, methods=["get"], url_path="rotation")
+    def list_rotation(self, request):
+        """Disclose future rotation schedules - strictly prohibited to preserve surprise."""
+        return Response(
+            {
+                "detail": "Future rotation schedules are hidden to preserve fairness and the element of surprise. Only the immediate next assignee is exposed."
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     @action(detail=True, methods=["post"], url_path="archive")
     def archive(self, request, pk=None):
@@ -234,4 +280,21 @@ class ChoreOccurrenceViewSet(viewsets.ReadOnlyModelViewSet):
             occurrence=occurrence, user=request.user, notes=notes
         )
         return Response(self.get_serializer(updated).data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], url_path="next-up")
+    def list_next_up(self, request):
+        """List the single next upcoming occurrence for each chore."""
+        qs = self.get_queryset().filter(status=ChoreOccurrence.STATUS_UPCOMING)
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], url_path="future-schedule")
+    def future_schedule(self, request):
+        """Future rotation schedule request - strictly forbidden."""
+        return Response(
+            {
+                "detail": "Future rotation schedules are hidden to preserve fairness and the element of surprise."
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
