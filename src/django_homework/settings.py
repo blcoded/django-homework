@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     "chores.apps.ChoresConfig",
     "notifications.apps.NotificationsConfig",
     "activity.apps.ActivityConfig",
+    "stats.apps.StatsConfig",
     "django_homework.apps.DjangoHomeworkConfig",
 ]
 

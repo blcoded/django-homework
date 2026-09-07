@@ -461,6 +461,14 @@ class ChoreOccurrence(models.Model):
             except Exception:
                 pass
 
+            try:
+                from stats.services import StatsService
+
+                for assignment in self.assignments.all():
+                    StatsService.record_missed_chore(assignment.user)
+            except Exception:
+                pass
+
     def complete(self, completed_time=None):
         """Transition to COMPLETED or COMPLETED_LATE."""
         now = completed_time or timezone.now()

@@ -262,4 +262,14 @@ class OccurrenceService:
             except Exception:
                 pass
 
+            try:
+                from stats.services import StatsService
+
+                if is_late:
+                    StatsService.record_late_completion(user)
+                else:
+                    StatsService.record_on_time_completion(user)
+            except Exception:
+                pass
+
         return occurrence
