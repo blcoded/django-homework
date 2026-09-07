@@ -174,8 +174,27 @@ class ChoreAssignmentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ChoreAssignment
-        fields = ["id", "user", "completed", "completed_at", "notes", "created_at", "updated_at"]
-        read_only_fields = ["id", "user", "completed", "completed_at", "created_at", "updated_at"]
+        fields = [
+            "id",
+            "user",
+            "completed",
+            "completed_at",
+            "was_missed",
+            "missed_at",
+            "notes",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "user",
+            "completed",
+            "completed_at",
+            "was_missed",
+            "missed_at",
+            "created_at",
+            "updated_at",
+        ]
 
 
 class ChoreOccurrenceSerializer(serializers.ModelSerializer):
@@ -192,6 +211,8 @@ class ChoreOccurrenceSerializer(serializers.ModelSerializer):
             "scheduled_start",
             "due_date",
             "completed_at",
+            "missed_at",
+            "was_missed",
             "assignments",
             "is_actionable",
             "created_at",
@@ -204,6 +225,8 @@ class ChoreOccurrenceSerializer(serializers.ModelSerializer):
             "scheduled_start",
             "due_date",
             "completed_at",
+            "missed_at",
+            "was_missed",
             "assignments",
             "is_actionable",
             "created_at",

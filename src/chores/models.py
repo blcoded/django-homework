@@ -360,6 +360,13 @@ class ChoreOccurrence(models.Model):
         null=True, blank=True, help_text="Deadline timestamp for this occurrence."
     )
     completed_at = models.DateTimeField(null=True, blank=True)
+    missed_at = models.DateTimeField(
+        null=True, blank=True, help_text="Timestamp when occurrence became past-due and missed."
+    )
+    was_missed = models.BooleanField(
+        default=False,
+        help_text="Audit flag permanently preserving that this chore was missed past its deadline.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -386,16 +393,24 @@ class ChoreOccurrence(models.Model):
             self.status = self.STATUS_ACTIVE
             self.save(update_fields=["status", "updated_at"])
 
-    def mark_missed(self):
+    def mark_missed(self, missed_time=None):
         """Transition from ACTIVE to MISSED when deadline expires."""
         if self.status == self.STATUS_ACTIVE:
+            now = missed_time or timezone.now()
             self.status = self.STATUS_MISSED
-            self.save(update_fields=["status", "updated_at"])
+            self.was_missed = True
+            self.missed_at = now
+            self.save(update_fields=["status", "was_missed", "missed_at", "updated_at"])
+            # Record missed state on assignments to preserve responsible roommate statistics
+            for assignment in self.assignments.all():
+                assignment.was_missed = True
+                assignment.missed_at = now
+                assignment.save(update_fields=["was_missed", "missed_at", "updated_at"])
 
     def complete(self, completed_time=None):
         """Transition to COMPLETED or COMPLETED_LATE."""
         now = completed_time or timezone.now()
-        if self.status == self.STATUS_MISSED:
+        if self.status == self.STATUS_MISSED or self.was_missed:
             self.status = self.STATUS_COMPLETED_LATE
         else:
             self.status = self.STATUS_COMPLETED
@@ -425,6 +440,11 @@ class ChoreAssignment(models.Model):
     )
     completed = models.BooleanField(default=False)
     completed_at = models.DateTimeField(null=True, blank=True)
+    was_missed = models.BooleanField(
+        default=False,
+        help_text="Audit flag permanently preserving that this assignment was missed past its deadline.",
+    )
+    missed_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

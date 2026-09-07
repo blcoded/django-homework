@@ -108,6 +108,75 @@ class OccurrenceService:
         return activated
 
     @staticmethod
+    def detect_and_transition_missed_occurrences(current_time=None) -> list[ChoreOccurrence]:
+        """
+        Transition past-due active occurrences to Missed while keeping them
+        assigned to the responsible roommate(s) and recording missed statistics.
+        """
+        now = current_time or timezone.now()
+        past_due = ChoreOccurrence.objects.filter(
+            status=ChoreOccurrence.STATUS_ACTIVE,
+            due_date__isnull=False,
+            due_date__lt=now,
+        )
+        missed = []
+        for occ in past_due:
+            occ.mark_missed(missed_time=now)
+            missed.append(occ)
+        return missed
+
+    @staticmethod
+    def get_missed_statistics(user, household_id=None) -> dict:
+        """
+        Compute missed chore statistics for user and household.
+        Strictly records missed events and tracks late completions.
+        """
+        user_assignments = ChoreAssignment.objects.filter(user=user)
+        if household_id:
+            user_assignments = user_assignments.filter(
+                occurrence__chore__household_id=household_id
+            )
+
+        user_total_missed = user_assignments.filter(was_missed=True).count()
+        user_currently_missed = user_assignments.filter(
+            occurrence__status=ChoreOccurrence.STATUS_MISSED
+        ).count()
+        user_completed_late = user_assignments.filter(
+            occurrence__status=ChoreOccurrence.STATUS_COMPLETED_LATE,
+            completed=True,
+        ).count()
+
+        recovery_rate = (
+            round((user_completed_late / user_total_missed) * 100.0, 1)
+            if user_total_missed > 0
+            else 100.0
+        )
+
+        household_occurrences = ChoreOccurrence.objects.all()
+        if household_id:
+            household_occurrences = household_occurrences.filter(
+                chore__household_id=household_id
+            )
+
+        household_total_missed = household_occurrences.filter(was_missed=True).count()
+        household_currently_missed = household_occurrences.filter(
+            status=ChoreOccurrence.STATUS_MISSED
+        ).count()
+        household_completed_late = household_occurrences.filter(
+            status=ChoreOccurrence.STATUS_COMPLETED_LATE
+        ).count()
+
+        return {
+            "user_total_missed": user_total_missed,
+            "user_currently_missed": user_currently_missed,
+            "user_completed_late": user_completed_late,
+            "user_late_recovery_rate": recovery_rate,
+            "household_total_missed": household_total_missed,
+            "household_currently_missed": household_currently_missed,
+            "household_completed_late": household_completed_late,
+        }
+
+    @staticmethod
     def complete_occurrence(
         occurrence: ChoreOccurrence, user, notes: str = "", completed_time=None
     ) -> ChoreOccurrence:
@@ -117,6 +186,8 @@ class OccurrenceService:
         generate the next single occurrence for recurring chores.
         """
         now = completed_time or timezone.now()
+        if occurrence.pk:
+            occurrence.refresh_from_db(fields=["status", "was_missed", "missed_at"])
 
         # Update or create user assignment completion
         assignment, _ = ChoreAssignment.objects.get_or_create(

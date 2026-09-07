@@ -298,3 +298,24 @@ class ChoreOccurrenceViewSet(viewsets.ReadOnlyModelViewSet):
             status=status.HTTP_403_FORBIDDEN,
         )
 
+    @action(detail=False, methods=["post"], url_path="detect-missed")
+    def detect_missed(self, request):
+        """Service trigger to detect and transition past-due active occurrences to Missed."""
+        missed = OccurrenceService.detect_and_transition_missed_occurrences()
+        return Response(
+            {
+                "missed_count": len(missed),
+                "missed_ids": [occ.id for occ in missed],
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=False, methods=["get"], url_path="missed-statistics")
+    def missed_statistics(self, request):
+        """Get missed chore statistics for user and household."""
+        stats = OccurrenceService.get_missed_statistics(
+            user=request.user,
+            household_id=request.query_params.get("household"),
+        )
+        return Response(stats, status=status.HTTP_200_OK)
+
