@@ -29,17 +29,25 @@ class FairAssignmentEngine:
         now = current_time or timezone.now()
         since = now - timedelta(days=cls.LOOKBACK_DAYS)
 
-        completed_assignments = ChoreAssignment.objects.filter(
-            user=user,
-            occurrence__chore__household=household,
-            completed=True,
-            completed_at__gte=since,
-            occurrence__status__in=[
-                ChoreOccurrence.STATUS_COMPLETED,
-                ChoreOccurrence.STATUS_COMPLETED_LATE,
-                ChoreOccurrence.STATUS_DISPUTED,
-            ],
-        ).select_related("occurrence__chore")
+        from django.db.models import Q
+
+        completed_assignments = (
+            ChoreAssignment.objects.filter(
+                occurrence__chore__household=household,
+                completed=True,
+                completed_at__gte=since,
+                occurrence__status__in=[
+                    ChoreOccurrence.STATUS_COMPLETED,
+                    ChoreOccurrence.STATUS_COMPLETED_LATE,
+                    ChoreOccurrence.STATUS_DISPUTED,
+                ],
+            )
+            .filter(
+                Q(original_user=user)
+                | (Q(original_user__isnull=True) & Q(user=user))
+            )
+            .select_related("occurrence__chore")
+        )
 
         points = 0
         for assignment in completed_assignments:

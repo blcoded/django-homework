@@ -543,6 +543,18 @@ class ChoreAssignment(models.Model):
         blank=True,
         help_text="Uploaded photo evidence of chore completion.",
     )
+    original_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="original_chore_assignments",
+        help_text="Original assignee before any personal favor chore swap.",
+    )
+    is_swapped = models.BooleanField(
+        default=False,
+        help_text="Flag indicating this assignment was swapped as a personal favor.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -553,5 +565,152 @@ class ChoreAssignment(models.Model):
     def __str__(self):
         comp_str = "Done" if self.completed else "Pending"
         return f"{self.user} -> {self.occurrence.chore.title} ({comp_str})"
+
+
+class ChoreSwapRequest(models.Model):
+    """
+    Mutual chore swap request model allowing roommates to propose and accept/decline
+    occurrence swaps as personal favors, leaving 8-week fairness calculations unaffected.
+    """
+
+    STATUS_PENDING = "pending"
+    STATUS_ACCEPTED = "accepted"
+    STATUS_DECLINED = "declined"
+    STATUS_CANCELLED = "cancelled"
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_ACCEPTED, "Accepted"),
+        (STATUS_DECLINED, "Declined"),
+        (STATUS_CANCELLED, "Cancelled"),
+    ]
+
+    household = models.ForeignKey(
+        Household, on_delete=models.CASCADE, related_name="swap_requests"
+    )
+    proposer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="proposed_swaps",
+    )
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="received_swaps",
+    )
+    proposer_occurrence = models.ForeignKey(
+        ChoreOccurrence,
+        on_delete=models.CASCADE,
+        related_name="proposer_swaps",
+        help_text="Chore occurrence offered by the proposer.",
+    )
+    recipient_occurrence = models.ForeignKey(
+        ChoreOccurrence,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="recipient_swaps",
+        help_text="Chore occurrence requested from recipient in exchange (optional).",
+    )
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING
+    )
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Swap: {self.proposer} <-> {self.recipient} ({self.status})"
+
+    def accept(self, user=None):
+        """
+        Accept the swap request with mutual agreement.
+        Swaps the assigned roommates on the respective occurrences while
+        preserving original_user so 8-week fairness calculations remain unaffected.
+        """
+        if self.status != self.STATUS_PENDING:
+            raise ValueError(f"Cannot accept swap request with status '{self.status}'.")
+        if user and user != self.recipient:
+            raise ValueError("Only the recipient can accept a swap request.")
+
+        now = timezone.now()
+
+        # 1. Update proposer assignment -> reassign to recipient
+        proposer_assignment = self.proposer_occurrence.assignments.filter(
+            user=self.proposer
+        ).first()
+        if not proposer_assignment:
+            raise ValueError("Proposer is no longer assigned to the offered chore occurrence.")
+
+        # If recipient is already assigned to proposer_occurrence (multi-assignee), remove duplicate
+        existing_recip = self.proposer_occurrence.assignments.filter(user=self.recipient).first()
+        if existing_recip:
+            existing_recip.delete()
+
+        proposer_assignment.original_user = (
+            proposer_assignment.original_user or proposer_assignment.user
+        )
+        proposer_assignment.user = self.recipient
+        proposer_assignment.is_swapped = True
+        proposer_assignment.save(
+            update_fields=["original_user", "user", "is_swapped", "updated_at"]
+        )
+
+        # 2. Update recipient assignment if 2-way swap
+        if self.recipient_occurrence:
+            recipient_assignment = self.recipient_occurrence.assignments.filter(
+                user=self.recipient
+            ).first()
+            if not recipient_assignment:
+                raise ValueError(
+                    "Recipient is no longer assigned to the requested chore occurrence."
+                )
+
+            existing_prop = self.recipient_occurrence.assignments.filter(
+                user=self.proposer
+            ).first()
+            if existing_prop:
+                existing_prop.delete()
+
+            recipient_assignment.original_user = (
+                recipient_assignment.original_user or recipient_assignment.user
+            )
+            recipient_assignment.user = self.proposer
+            recipient_assignment.is_swapped = True
+            recipient_assignment.save(
+                update_fields=["original_user", "user", "is_swapped", "updated_at"]
+            )
+
+        self.status = self.STATUS_ACCEPTED
+        self.responded_at = now
+        self.save(update_fields=["status", "responded_at", "updated_at"])
+        return self
+
+    def decline(self, user=None):
+        """Explicitly decline the swap request."""
+        if self.status != self.STATUS_PENDING:
+            raise ValueError(f"Cannot decline swap request with status '{self.status}'.")
+        if user and user != self.recipient:
+            raise ValueError("Only the recipient can decline a swap request.")
+
+        self.status = self.STATUS_DECLINED
+        self.responded_at = timezone.now()
+        self.save(update_fields=["status", "responded_at", "updated_at"])
+        return self
+
+    def cancel(self, user=None):
+        """Proposer cancels the pending swap request."""
+        if self.status != self.STATUS_PENDING:
+            raise ValueError(f"Cannot cancel swap request with status '{self.status}'.")
+        if user and user != self.proposer:
+            raise ValueError("Only the proposer can cancel a swap request.")
+
+        self.status = self.STATUS_CANCELLED
+        self.save(update_fields=["status", "updated_at"])
+        return self
 
 

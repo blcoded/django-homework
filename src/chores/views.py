@@ -16,6 +16,7 @@ from .models import (
     ChoreOccurrence,
     ChoreSuggestion,
     ChoreSuggestionVote,
+    ChoreSwapRequest,
 )
 from .serializers import (
     ChoreCompletionSerializer,
@@ -23,6 +24,7 @@ from .serializers import (
     ChoreOccurrenceSerializer,
     ChoreSerializer,
     ChoreSuggestionSerializer,
+    ChoreSwapRequestSerializer,
     ChoreVerificationSerializer,
     EffortSuggestionSerializer,
 )
@@ -419,4 +421,80 @@ class ChoreOccurrenceViewSet(viewsets.ReadOnlyModelViewSet):
         notes = request.data.get("notes", "")
         occurrence.resolve_dispute(resolved_by=request.user, resolution_notes=notes)
         return Response(self.get_serializer(occurrence).data, status=status.HTTP_200_OK)
+
+
+class ChoreSwapRequestViewSet(viewsets.ModelViewSet):
+    """
+    Endpoints for proposing, viewing, accepting, declining, and cancelling chore swap requests.
+    Enforces mutual acceptance before any swap takes effect.
+    """
+
+    permission_classes = [IsAuthenticated, IsActiveHouseholdMember]
+    serializer_class = ChoreSwapRequestSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        active_households = HouseholdMember.objects.filter(
+            user=user, status=HouseholdMember.STATUS_ACTIVE
+        ).values_list("household_id", flat=True)
+
+        qs = ChoreSwapRequest.objects.filter(household_id__in=active_households)
+
+        household_id = self.request.query_params.get("household")
+        if household_id:
+            qs = qs.filter(household_id=household_id)
+
+        status_param = self.request.query_params.get("status")
+        if status_param:
+            qs = qs.filter(status=status_param)
+
+        return qs
+
+    @action(detail=True, methods=["post"], url_path="accept")
+    def accept(self, request, pk=None):
+        """Recipient explicitly accepts the chore swap request."""
+        swap = self.get_object()
+        if request.user != swap.recipient:
+            return Response(
+                {"detail": "Only the recipient can accept this swap request."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            swap.accept(user=request.user)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(self.get_serializer(swap).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="decline")
+    def decline(self, request, pk=None):
+        """Recipient explicitly declines the chore swap request."""
+        swap = self.get_object()
+        if request.user != swap.recipient:
+            return Response(
+                {"detail": "Only the recipient can decline this swap request."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            swap.decline(user=request.user)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(self.get_serializer(swap).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="cancel")
+    def cancel(self, request, pk=None):
+        """Proposer cancels the pending swap request."""
+        swap = self.get_object()
+        if request.user != swap.proposer:
+            return Response(
+                {"detail": "Only the proposer can cancel this swap request."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            swap.cancel(user=request.user)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(self.get_serializer(swap).data, status=status.HTTP_200_OK)
 
