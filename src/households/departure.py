@@ -1,24 +1,24 @@
-from django.utils import timezone
+﻿from django.utils import timezone
 from chores.models import ChoreAssignment, ChoreOccurrence
 from chores.assignment import FairAssignmentEngine
+from households.models import HouseholdAlert, HouseholdMember
 
 
-class AbsenceRebalanceService:
+class DepartureRebalanceService:
     """
-    Automated service managing member absence chore rebalancing and return to rotation.
-    1. Pending chores assigned to a paused member are dynamically redistributed
-       among available active roommates using the fair assignment engine.
-    2. Returning members are reintegrated into future rotation without displacing
-       active chores already assigned to other roommates.
+    Service to reassign pending chores when a member's departure is approved,
+    or mark them Unassigned and generate HouseholdAlerts if no eligible roommates exist.
     """
 
     @classmethod
-    def rebalance_paused_member_chores(cls, member) -> list[ChoreAssignment]:
+    def rebalance_departing_member_chores(
+        cls, member: HouseholdMember
+    ) -> list[ChoreAssignment]:
         """
-        Automatically rebalance and reassign pending chores assigned to the paused member.
-        Pending chores include uncompleted assignments on upcoming or active occurrences.
+        Reassign active and upcoming chores assigned to the departing member.
+        If no eligible active roommates are available, mark the occurrence as Unassigned
+        and generate a HouseholdAlert.
         """
-        reassigned = []
         pending_assignments = (
             ChoreAssignment.objects.filter(
                 user=member.user,
@@ -33,16 +33,18 @@ class AbsenceRebalanceService:
             .order_by("occurrence__scheduled_start")
         )
 
+        reassigned = []
         for assignment in pending_assignments:
             occurrence = assignment.occurrence
             chore = occurrence.chore
 
-            # Existing assignees on this occurrence
+            # Current assignees excluding departing member
             current_assigned_ids = set(
-                occurrence.assignments.values_list("user_id", flat=True)
+                occurrence.assignments.exclude(id=assignment.id).values_list(
+                    "user_id", flat=True
+                )
             )
 
-            # Select replacement assignee from active roommates (excluding currently assigned)
             candidates = FairAssignmentEngine.select_assignees(
                 chore=chore,
                 current_time=timezone.now(),
@@ -57,36 +59,17 @@ class AbsenceRebalanceService:
                 assignment.save(update_fields=["user", "original_user", "is_swapped"])
                 reassigned.append(assignment)
             else:
+                # Zero eligible roommates available -> Mark occurrence as Unassigned
                 occurrence.status = ChoreOccurrence.STATUS_UNASSIGNED
                 occurrence.save(update_fields=["status", "updated_at"])
                 assignment.delete()
-                from households.models import HouseholdAlert
 
                 HouseholdAlert.objects.create(
                     household=member.household,
                     occurrence=occurrence,
                     chore=chore,
                     alert_type=HouseholdAlert.ALERT_UNASSIGNED,
-                    message=f"Chore '{chore.title}' cannot be reassigned during member absence because zero eligible roommates are available.",
+                    message=f"Chore '{chore.title}' is unassigned because no eligible roommates are available following member departure.",
                 )
 
         return reassigned
-
-    @classmethod
-    def check_and_complete_ended_absences(cls):
-        """
-        Scan for approved absences whose end_date has passed, and transition them
-        to completed, restoring the member to active status without displacing active chores.
-        """
-        from households.models import AbsenceRequest
-
-        today = timezone.localdate()
-        ended_absences = AbsenceRequest.objects.filter(
-            status=AbsenceRequest.STATUS_APPROVED,
-            end_date__lt=today,
-        )
-        completed = []
-        for req in ended_absences:
-            req.end_absence()
-            completed.append(req)
-        return completed

@@ -337,6 +337,7 @@ class ChoreOccurrence(models.Model):
     STATUS_MISSED = "missed"
     STATUS_COMPLETED_LATE = "completed_late"
     STATUS_DISPUTED = "disputed"
+    STATUS_UNASSIGNED = "unassigned"
 
     STATUS_CHOICES = [
         (STATUS_UPCOMING, "Upcoming"),
@@ -345,6 +346,7 @@ class ChoreOccurrence(models.Model):
         (STATUS_MISSED, "Missed"),
         (STATUS_COMPLETED_LATE, "Completed Late"),
         (STATUS_DISPUTED, "Disputed"),
+        (STATUS_UNASSIGNED, "Unassigned"),
     ]
 
     chore = models.ForeignKey(

@@ -9,6 +9,7 @@ from .models import (
     LeaveRequestVote,
     AbsenceRequest,
     AbsenceRequestVote,
+    HouseholdAlert,
 )
 
 
@@ -36,12 +37,14 @@ class HouseholdSerializer(serializers.ModelSerializer):
             "timezone",
             "require_join_approval",
             "require_completion_verification",
+            "is_paused",
+            "paused_at",
             "invite_code",
             "active_members_count",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "invite_code", "created_at", "updated_at"]
+        read_only_fields = ["id", "is_paused", "paused_at", "invite_code", "created_at", "updated_at"]
 
     def get_active_members_count(self, obj):
         return obj.members.filter(status=HouseholdMember.STATUS_ACTIVE).count()
@@ -229,3 +232,22 @@ class AbsenceRequestSerializer(serializers.ModelSerializer):
             )
 
         return attrs
+
+
+class HouseholdAlertSerializer(serializers.ModelSerializer):
+    """Serializer for household alerts (e.g. unassigned occurrences)."""
+
+    class Meta:
+        model = HouseholdAlert
+        fields = [
+            "id",
+            "household",
+            "occurrence",
+            "chore",
+            "alert_type",
+            "message",
+            "is_resolved",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]

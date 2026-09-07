@@ -24,6 +24,7 @@ from .serializers import (
     VoteActionSerializer,
     AbsenceRequestSerializer,
     AbsenceRequestVoteSerializer,
+    HouseholdAlertSerializer,
 )
 
 
@@ -172,6 +173,9 @@ class HouseholdViewSet(viewsets.ModelViewSet):
             # Solo member leaving immediately
             membership.status = HouseholdMember.STATUS_DEPARTED
             membership.save(update_fields=["status", "updated_at"])
+            from .departure import DepartureRebalanceService
+
+            DepartureRebalanceService.rebalance_departing_member_chores(membership)
             return Response(
                 {"status": "departed", "message": "You have left the household."},
                 status=status.HTTP_200_OK,
@@ -393,6 +397,46 @@ class HouseholdViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK,
         )
+
+    @action(detail=True, methods=["post"], url_path="pause")
+    def pause_household(self, request, pk=None):
+        """Freeze all chore activity during a household-wide pause without missed penalties."""
+        household = self.get_object()
+        from .pause import HouseholdPauseService
+
+        HouseholdPauseService.freeze_household(household)
+        return Response(
+            {
+                "status": "paused",
+                "message": "Household chore activity has been paused. Missed penalties and activations are suspended.",
+                "household": HouseholdSerializer(household).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["post"], url_path="resume")
+    def resume_household(self, request, pk=None):
+        """Resume chore activity for the household."""
+        household = self.get_object()
+        from .pause import HouseholdPauseService
+
+        HouseholdPauseService.resume_household(household)
+        return Response(
+            {
+                "status": "resumed",
+                "message": "Household chore activity has been resumed.",
+                "household": HouseholdSerializer(household).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["get"], url_path="alerts")
+    def alerts(self, request, pk=None):
+        """List all alerts for this household."""
+        household = self.get_object()
+        alerts = household.alerts.all()
+        serializer = HouseholdAlertSerializer(alerts, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class AbsenceRequestViewSet(viewsets.ModelViewSet):

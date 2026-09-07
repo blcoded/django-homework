@@ -95,9 +95,11 @@ class OccurrenceService:
     def activate_upcoming_occurrences(current_time=None) -> list[ChoreOccurrence]:
         """
         Transition upcoming chore occurrences to active once their scheduled start arrives.
+        Freezes activation for households currently in paused status.
         """
         now = current_time or timezone.now()
         upcoming = ChoreOccurrence.objects.filter(
+            chore__household__is_paused=False,
             status=ChoreOccurrence.STATUS_UPCOMING,
             scheduled_start__lte=now,
         )
@@ -112,9 +114,11 @@ class OccurrenceService:
         """
         Transition past-due active occurrences to Missed while keeping them
         assigned to the responsible roommate(s) and recording missed statistics.
+        Freezes missed penalties for households currently in paused status.
         """
         now = current_time or timezone.now()
         past_due = ChoreOccurrence.objects.filter(
+            chore__household__is_paused=False,
             status=ChoreOccurrence.STATUS_ACTIVE,
             due_date__isnull=False,
             due_date__lt=now,

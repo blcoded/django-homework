@@ -136,8 +136,24 @@ class FairAssignmentEngine:
     ) -> list[ChoreAssignment]:
         """
         Select and create ChoreAssignment records for an occurrence using the fair engine.
+        Fallback logic: Marks occurrence as Unassigned and generates a household alert
+        when zero eligible roommates are available for assignment.
         """
         selected_users = cls.select_assignees(occurrence.chore, current_time)
+        if not selected_users:
+            occurrence.status = ChoreOccurrence.STATUS_UNASSIGNED
+            occurrence.save(update_fields=["status", "updated_at"])
+            from households.models import HouseholdAlert
+
+            HouseholdAlert.objects.create(
+                household=occurrence.chore.household,
+                occurrence=occurrence,
+                chore=occurrence.chore,
+                alert_type=HouseholdAlert.ALERT_UNASSIGNED,
+                message=f"Chore '{occurrence.chore.title}' cannot be assigned because zero eligible roommates are available.",
+            )
+            return []
+
         assignments = []
         for user in selected_users:
             assignment, _ = ChoreAssignment.objects.get_or_create(

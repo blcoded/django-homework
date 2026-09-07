@@ -26,6 +26,15 @@ class Household(models.Model):
     invite_code = models.CharField(
         max_length=64, unique=True, default=generate_invite_code
     )
+    is_paused = models.BooleanField(
+        default=False,
+        help_text="Whether chore activity is frozen across the household without missed penalties.",
+    )
+    paused_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when the household chore activity was paused.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -39,6 +48,18 @@ class Household(models.Model):
         self.invite_code = generate_invite_code()
         self.save(update_fields=["invite_code", "updated_at"])
         return self.invite_code
+
+    def pause_chores(self):
+        from django.utils import timezone
+
+        self.is_paused = True
+        self.paused_at = timezone.now()
+        self.save(update_fields=["is_paused", "paused_at", "updated_at"])
+
+    def resume_chores(self):
+        self.is_paused = False
+        self.paused_at = None
+        self.save(update_fields=["is_paused", "paused_at", "updated_at"])
 
     def get_active_members(self):
         return self.members.filter(status=HouseholdMember.STATUS_ACTIVE)
@@ -223,6 +244,9 @@ class LeaveRequest(models.Model):
             self.save(update_fields=["status", "updated_at"])
             self.member.status = HouseholdMember.STATUS_DEPARTED
             self.member.save(update_fields=["status", "updated_at"])
+            from .departure import DepartureRebalanceService
+
+            DepartureRebalanceService.rebalance_departing_member_chores(self.member)
             return self.status
 
         votes = self.votes.filter(voter_id__in=other_active_user_ids)
@@ -239,6 +263,9 @@ class LeaveRequest(models.Model):
             self.save(update_fields=["status", "updated_at"])
             self.member.status = HouseholdMember.STATUS_DEPARTED
             self.member.save(update_fields=["status", "updated_at"])
+            from .departure import DepartureRebalanceService
+
+            DepartureRebalanceService.rebalance_departing_member_chores(self.member)
 
         return self.status
 
@@ -383,3 +410,49 @@ class AbsenceRequestVote(models.Model):
     def __str__(self):
         decision = "Approve" if self.approved else "Reject"
         return f"{self.voter}: {decision} for {self.absence_request}"
+
+
+class HouseholdAlert(models.Model):
+    """
+    Household alert generated for system events such as unassigned chore occurrences
+    or critical household notices.
+    """
+
+    ALERT_UNASSIGNED = "unassigned_occurrence"
+    ALERT_PAUSE = "household_pause"
+
+    ALERT_CHOICES = [
+        (ALERT_UNASSIGNED, "Unassigned Occurrence"),
+        (ALERT_PAUSE, "Household Pause"),
+    ]
+
+    household = models.ForeignKey(
+        Household, on_delete=models.CASCADE, related_name="alerts"
+    )
+    occurrence = models.ForeignKey(
+        "chores.ChoreOccurrence",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="alerts",
+    )
+    chore = models.ForeignKey(
+        "chores.Chore",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="alerts",
+    )
+    alert_type = models.CharField(
+        max_length=50, choices=ALERT_CHOICES, default=ALERT_UNASSIGNED
+    )
+    message = models.TextField()
+    is_resolved = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Alert ({self.household.name}): {self.message[:40]}"
