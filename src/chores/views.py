@@ -8,12 +8,21 @@ from households.models import HouseholdMember
 from households.permissions import IsActiveHouseholdMember
 from households.serializers import VoteActionSerializer
 from .heuristic import suggest_effort_level
-from .models import Chore, ChoreSuggestion, ChoreSuggestionVote
+from .models import (
+    Chore,
+    ChoreAssignment,
+    ChoreOccurrence,
+    ChoreSuggestion,
+    ChoreSuggestionVote,
+)
 from .serializers import (
+    ChoreOccurrenceSerializer,
     ChoreSerializer,
     ChoreSuggestionSerializer,
     EffortSuggestionSerializer,
 )
+from .services import OccurrenceService
+
 
 
 class ChoreViewSet(viewsets.ModelViewSet):
@@ -170,3 +179,59 @@ class ChoreSuggestionViewSet(viewsets.ModelViewSet):
             {"expired_count": expired_count, "checked_at": now},
             status=status.HTTP_200_OK,
         )
+
+
+class ChoreOccurrenceViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Endpoints for viewing and interacting with chore occurrences.
+    Scoped to households where user is an active member.
+    """
+
+    permission_classes = [IsAuthenticated, IsActiveHouseholdMember]
+    serializer_class = ChoreOccurrenceSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        active_households = HouseholdMember.objects.filter(
+            user=user, status=HouseholdMember.STATUS_ACTIVE
+        ).values_list("household_id", flat=True)
+
+        qs = ChoreOccurrence.objects.filter(chore__household_id__in=active_households)
+
+        # Optional filters
+        status_filter = self.request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
+        chore_id = self.request.query_params.get("chore")
+        if chore_id:
+            qs = qs.filter(chore_id=chore_id)
+
+        household_id = self.request.query_params.get("household")
+        if household_id:
+            qs = qs.filter(chore__household_id=household_id)
+
+        return qs
+
+    @action(detail=False, methods=["post"], url_path="activate-upcoming")
+    def activate_upcoming(self, request):
+        """Service trigger to activate any upcoming occurrences whose start window has opened."""
+        activated = OccurrenceService.activate_upcoming_occurrences()
+        return Response(
+            {
+                "activated_count": len(activated),
+                "activated_ids": [occ.id for occ in activated],
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["post"], url_path="complete")
+    def complete(self, request, pk=None):
+        """Mark occurrence complete for the authenticated user."""
+        occurrence = self.get_object()
+        notes = request.data.get("notes", "")
+        updated = OccurrenceService.complete_occurrence(
+            occurrence=occurrence, user=request.user, notes=notes
+        )
+        return Response(self.get_serializer(updated).data, status=status.HTTP_200_OK)
+

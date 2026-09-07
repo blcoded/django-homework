@@ -1,8 +1,16 @@
 from rest_framework import serializers
 
 from households.models import Household, HouseholdMember
+from users.serializers import UserSerializer
 from .heuristic import suggest_effort_level
-from .models import Chore, ChoreSuggestion, ChoreSuggestionVote
+from .models import (
+    Chore,
+    ChoreAssignment,
+    ChoreOccurrence,
+    ChoreSuggestion,
+    ChoreSuggestionVote,
+)
+
 
 
 class EffortSuggestionSerializer(serializers.Serializer):
@@ -152,3 +160,46 @@ class ChoreSuggestionSerializer(serializers.ModelSerializer):
             desc = validated_data.get("description", "")
             validated_data["effort_level"] = suggest_effort_level(title, desc)
         return super().create(validated_data)
+
+
+class ChoreAssignmentSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+
+    class Meta:
+        model = ChoreAssignment
+        fields = ["id", "user", "completed", "completed_at", "notes", "created_at", "updated_at"]
+        read_only_fields = ["id", "user", "completed", "completed_at", "created_at", "updated_at"]
+
+
+class ChoreOccurrenceSerializer(serializers.ModelSerializer):
+    chore = ChoreSerializer(read_only=True)
+    assignments = ChoreAssignmentSerializer(many=True, read_only=True)
+    is_actionable = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = ChoreOccurrence
+        fields = [
+            "id",
+            "chore",
+            "status",
+            "scheduled_start",
+            "due_date",
+            "completed_at",
+            "assignments",
+            "is_actionable",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "chore",
+            "status",
+            "scheduled_start",
+            "due_date",
+            "completed_at",
+            "assignments",
+            "is_actionable",
+            "created_at",
+            "updated_at",
+        ]
+

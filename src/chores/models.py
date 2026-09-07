@@ -324,3 +324,110 @@ class ChoreSuggestionVote(models.Model):
         vote_str = "Approve" if self.approved else "Reject"
         return f"{self.voter}: {vote_str} for {self.suggestion.title}"
 
+
+class ChoreOccurrence(models.Model):
+    """
+    Occurrence lifecycle model representing a concrete instance of a chore.
+    Tracks states: Upcoming, Active, Completed, Missed, Completed Late, Disputed.
+    """
+
+    STATUS_UPCOMING = "upcoming"
+    STATUS_ACTIVE = "active"
+    STATUS_COMPLETED = "completed"
+    STATUS_MISSED = "missed"
+    STATUS_COMPLETED_LATE = "completed_late"
+    STATUS_DISPUTED = "disputed"
+
+    STATUS_CHOICES = [
+        (STATUS_UPCOMING, "Upcoming"),
+        (STATUS_ACTIVE, "Active"),
+        (STATUS_COMPLETED, "Completed"),
+        (STATUS_MISSED, "Missed"),
+        (STATUS_COMPLETED_LATE, "Completed Late"),
+        (STATUS_DISPUTED, "Disputed"),
+    ]
+
+    chore = models.ForeignKey(
+        Chore, on_delete=models.CASCADE, related_name="occurrences"
+    )
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default=STATUS_UPCOMING
+    )
+    scheduled_start = models.DateTimeField(
+        help_text="Point in time when the action window opens for this occurrence."
+    )
+    due_date = models.DateTimeField(
+        null=True, blank=True, help_text="Deadline timestamp for this occurrence."
+    )
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["scheduled_start", "-created_at"]
+
+    def __str__(self):
+        return f"{self.chore.title} ({self.status}) @ {self.scheduled_start.strftime('%Y-%m-%d %H:%M')}"
+
+    @property
+    def is_actionable(self):
+        return self.status in [self.STATUS_ACTIVE, self.STATUS_MISSED]
+
+    def activate(self):
+        """Transition from UPCOMING to ACTIVE when window opens."""
+        if self.status == self.STATUS_UPCOMING:
+            self.status = self.STATUS_ACTIVE
+            self.save(update_fields=["status", "updated_at"])
+
+    def mark_missed(self):
+        """Transition from ACTIVE to MISSED when deadline expires."""
+        if self.status == self.STATUS_ACTIVE:
+            self.status = self.STATUS_MISSED
+            self.save(update_fields=["status", "updated_at"])
+
+    def complete(self, completed_time=None):
+        """Transition to COMPLETED or COMPLETED_LATE."""
+        now = completed_time or timezone.now()
+        if self.status == self.STATUS_MISSED:
+            self.status = self.STATUS_COMPLETED_LATE
+        else:
+            self.status = self.STATUS_COMPLETED
+        self.completed_at = now
+        self.save(update_fields=["status", "completed_at", "updated_at"])
+
+    def dispute(self):
+        """Transition to DISPUTED while preserving completion details."""
+        if self.status in [self.STATUS_COMPLETED, self.STATUS_COMPLETED_LATE]:
+            self.status = self.STATUS_DISPUTED
+            self.save(update_fields=["status", "updated_at"])
+
+
+class ChoreAssignment(models.Model):
+    """
+    Assignment linking a roommate to a chore occurrence.
+    For multi-person chores, multiple assignments exist for one occurrence.
+    """
+
+    occurrence = models.ForeignKey(
+        ChoreOccurrence, on_delete=models.CASCADE, related_name="assignments"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="chore_assignments",
+    )
+    completed = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("occurrence", "user")
+        ordering = ["created_at"]
+
+    def __str__(self):
+        comp_str = "Done" if self.completed else "Pending"
+        return f"{self.user} -> {self.occurrence.chore.title} ({comp_str})"
+
+
