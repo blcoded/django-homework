@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     # Local project apps
     "users.apps.UsersConfig",
     "households.apps.HouseholdsConfig",
+    "chores.apps.ChoresConfig",
     "django_homework.apps.DjangoHomeworkConfig",
 ]
 
